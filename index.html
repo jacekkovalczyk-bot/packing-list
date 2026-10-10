@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Packing List</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <section class="card">
+        <header class="app-header">
+          <div>
+            <p class="eyebrow">Travel planner</p>
+            <h1>Packing List</h1>
+          </div>
+
+          <div class="header-stack">
+            <div id="current-list-name" class="list-name">My Packing List</div>
+            <span id="item-count" class="count-badge">0 items</span>
+          </div>
+        </header>
+
+        <div class="list-controls" aria-label="Packing list controls">
+          <label class="sr-only" for="list-select">Select packing list</label>
+          <select id="list-select" class="list-select" aria-label="Packing list selector"></select>
+
+          <div class="list-actions">
+            <button id="new-list-btn" class="secondary-btn" type="button">New list</button>
+            <button id="duplicate-list-btn" class="secondary-btn" type="button">Duplicate List</button>
+            <button id="templates-btn" class="secondary-btn" type="button">Templates</button>
+            <button id="rename-list-btn" class="secondary-btn" type="button">Rename</button>
+            <button id="delete-list-btn" class="danger-btn" type="button">Delete</button>
+            <button id="manage-categories-btn" class="secondary-btn" type="button">Manage Categories</button>
+            <button id="export-data-btn" class="secondary-btn" type="button">Export Data</button>
+            <button id="import-data-btn" class="secondary-btn" type="button">Import Data</button>
+            <input id="import-data-input" class="sr-only" type="file" accept=".json,application/json" />
+          </div>
+        </div>
+
+        <section class="packing-progress" aria-label="Packing progress">
+          <div class="progress-heading">
+            <span class="progress-title">Packing progress</span>
+            <span id="progress-details" class="progress-details">0 of 0 packed · 0%</span>
+          </div>
+          <progress id="packing-progress" max="100" value="0" aria-label="Packing progress"></progress>
+        </section>
+
+        <section class="trip-details" aria-labelledby="trip-details-title">
+          <div class="trip-details-header">
+            <h2 id="trip-details-title">Trip Details</h2>
+            <button id="edit-trip-details-btn" class="secondary-btn" type="button">Edit Trip Details</button>
+          </div>
+          <dl id="trip-details-display" class="trip-details-grid"></dl>
+        </section>
+
+        <form id="packing-form" class="packing-form" autocomplete="off">
+          <label class="sr-only" for="item-input">Add packing item</label>
+          <input
+            id="item-input"
+            type="text"
+            name="item"
+            maxlength="80"
+            placeholder="Add an item..."
+            required
+          />
+
+          <label class="sr-only" for="category-select">Item category</label>
+          <select id="category-select" name="category" aria-label="Category">
+            <option value="Clothes">Clothes</option>
+            <option value="Documents">Documents</option>
+            <option value="Electronics">Electronics</option>
+            <option value="Sports Equipment">Sports Equipment</option>
+          </select>
+
+          <button type="submit">Add</button>
+        </form>
+
+        <ul id="packing-list" class="packing-list" aria-live="polite"></ul>
+      </section>
+    </main>
+
+    <div id="templates-modal" class="modal hidden" aria-modal="true" role="dialog" aria-labelledby="templates-modal-title">
+      <div class="modal-card">
+        <div class="modal-header">
+          <h2 id="templates-modal-title">Packing List Templates</h2>
+          <button id="templates-modal-close" class="icon-btn" type="button" aria-label="Close templates">×</button>
+        </div>
+        <div id="templates-list" class="category-manager-list"></div>
+        <div class="modal-actions">
+          <button id="save-template-btn" class="secondary-btn" type="button">Save Current List as Template</button>
+          <button id="templates-close-btn" class="secondary-btn" type="button">Close</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="trip-details-modal" class="modal hidden" aria-modal="true" role="dialog" aria-labelledby="trip-details-modal-title">
+      <form id="trip-details-form" class="modal-card trip-details-modal">
+        <div class="modal-header">
+          <h2 id="trip-details-modal-title">Edit Trip Details</h2>
+          <button id="trip-details-close" class="icon-btn" type="button" aria-label="Close trip details">×</button>
+        </div>
+        <div class="trip-details-fields">
+          <label class="trip-detail-field" for="trip-destination">
+            <span>Destination</span>
+            <input id="trip-destination" type="text" maxlength="120" />
+          </label>
+          <label class="trip-detail-field" for="trip-departure-date">
+            <span>Departure Date</span>
+            <input id="trip-departure-date" type="date" />
+          </label>
+          <label class="trip-detail-field" for="trip-return-date">
+            <span>Return Date</span>
+            <input id="trip-return-date" type="date" />
+          </label>
+          <label class="trip-detail-field" for="trip-type">
+            <span>Trip Type</span>
+            <select id="trip-type">
+              <option value="">Not set</option>
+              <option value="Business">Business</option>
+              <option value="Holiday">Holiday</option>
+              <option value="Marathon">Marathon</option>
+              <option value="Other">Other</option>
+            </select>
+          </label>
+          <label class="trip-detail-field trip-notes-field" for="trip-notes">
+            <span>Notes</span>
+            <textarea id="trip-notes" rows="3" maxlength="1000"></textarea>
+          </label>
+        </div>
+        <div class="modal-actions">
+          <button class="primary-btn" type="submit">Save Details</button>
+          <button id="trip-details-cancel" class="secondary-btn" type="button">Cancel</button>
+        </div>
+      </form>
+    </div>
+
+    <div id="category-modal" class="modal hidden" aria-modal="true" role="dialog" aria-labelledby="category-modal-title">
+      <div class="modal-card">
+        <div class="modal-header">
+          <h2 id="category-modal-title">Manage Categories</h2>
+          <button id="close-category-modal" class="icon-btn" type="button" aria-label="Close category manager">×</button>
+        </div>
+        <div id="category-list" class="category-manager-list"></div>
+        <div class="modal-actions">
+          <button id="add-category-btn" class="secondary-btn" type="button">Add category</button>
+          <button id="category-modal-close" class="secondary-btn" type="button">Close</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="move-category-modal" class="modal hidden" aria-modal="true" role="dialog" aria-labelledby="move-category-title">
+      <div class="modal-card small-modal">
+        <h2 id="move-category-title">Move items</h2>
+        <p id="move-category-message" class="modal-text"></p>
+        <label class="sr-only" for="move-category-select">Target category</label>
+        <select id="move-category-select" class="list-select"></select>
+        <div class="modal-actions">
+          <button id="move-category-confirm" class="primary-btn" type="button">Move & Delete</button>
+          <button id="move-category-cancel" class="secondary-btn" type="button">Cancel</button>
+        </div>
+      </div>
+    </div>
+
+    <script src="script.js"></script>
+  </body>
+</html>
