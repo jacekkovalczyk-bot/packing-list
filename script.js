@@ -1,16 +1,20 @@
 var STORAGE_KEY = 'packing-lists-v1';
 var LEGACY_STORAGE_KEY = 'packing-list-items-v1';
+var MIGRATION_BACKUP_KEY = 'packing-lists-v1-global-categories-backup';
+var SCHEMA_VERSION = 2;
 var DEFAULT_CATEGORIES = [
   'Clothes',
   'Documents',
   'Electronics',
-  'Sports Equipment'
+  'Sports Equipment',
+  'Toiletries'
 ];
 var TRIP_TYPES = ['Business', 'Holiday', 'Marathon', 'Other'];
 var BUILT_IN_TEMPLATES = [
   {
     id: 'builtin-marathon-running',
     name: 'Marathon / Running Trip',
+    categories: ['Clothes', 'Documents', 'Electronics', 'Sports Equipment'],
     tripDetails: { destination: '', departureDate: '', returnDate: '', tripType: 'Marathon', notes: '' },
     items: [
       { text: 'Running shoes', category: 'Sports Equipment' },
@@ -23,6 +27,7 @@ var BUILT_IN_TEMPLATES = [
   {
     id: 'builtin-summer-holidays',
     name: 'Summer Holidays',
+    categories: ['Clothes', 'Documents', 'Electronics'],
     tripDetails: { destination: '', departureDate: '', returnDate: '', tripType: 'Holiday', notes: '' },
     items: [
       { text: 'T-shirts', category: 'Clothes' },
@@ -34,6 +39,7 @@ var BUILT_IN_TEMPLATES = [
   {
     id: 'builtin-business-trip',
     name: 'Business Trip',
+    categories: ['Clothes', 'Documents', 'Electronics'],
     tripDetails: { destination: '', departureDate: '', returnDate: '', tripType: 'Business', notes: '' },
     items: [
       { text: 'Business clothes', category: 'Clothes' },
@@ -45,6 +51,7 @@ var BUILT_IN_TEMPLATES = [
   {
     id: 'builtin-weekend-trip',
     name: 'Weekend Trip',
+    categories: ['Clothes', 'Documents', 'Electronics'],
     tripDetails: { destination: '', departureDate: '', returnDate: '', tripType: 'Holiday', notes: '' },
     items: [
       { text: 'Change of clothes', category: 'Clothes' },
@@ -211,93 +218,201 @@ function isValidTripDetails(details) {
     (!details.tripType || TRIP_TYPES.indexOf(details.tripType) >= 0);
 }
 
-function normalizeTemplate(template) {
+function copyRecord(record) {
+  var copy = {};
+  if (record && typeof record === 'object' && !Array.isArray(record)) {
+    Object.keys(record).forEach(function(key) {
+      copy[key] = record[key];
+    });
+  }
+  return copy;
+}
+
+function getCategoryName(category) {
+  if (typeof category === 'string') {
+    return category.trim();
+  }
+  return category && typeof category.name === 'string' ? category.name.trim() : '';
+}
+
+function createCategory(name) {
+  return { id: createId('category'), name: name };
+}
+
+function normalizeCategoryCollection(categoryRecords, items, fallbackNames, usedIds) {
+  var categories = [];
+  var categoriesById = {};
+  var categoriesBySourceId = {};
+  var categoriesByName = {};
+  var sourceCategories = Array.isArray(categoryRecords) ? categoryRecords : [];
+  var sourceItems = Array.isArray(items) ? items : [];
+  usedIds = usedIds || {};
+
+  function addCategory(source, requestedName) {
+    var name = getCategoryName(source) || requestedName || DEFAULT_CATEGORIES[0];
+    var sourceId = source && typeof source === 'object' && typeof source.id === 'string' ? source.id : '';
+    var id = sourceId && !usedIds[sourceId] ? sourceId : createId('category');
+    while (usedIds[id]) {
+      id = createId('category');
+    }
+    var category = copyRecord(source);
+    category.id = id;
+    category.name = name;
+    categories.push(category);
+    categoriesById[id] = category;
+    if (sourceId) {
+      categoriesBySourceId[sourceId] = category;
+    }
+    if (!categoriesByName[name]) {
+      categoriesByName[name] = category;
+    }
+    usedIds[id] = true;
+    return category;
+  }
+
+  sourceCategories.forEach(function(source) {
+    if (source && typeof source === 'object' && typeof source.id === 'string' && categoriesById[source.id]) {
+      return;
+    }
+    addCategory(source);
+  });
+
+  (fallbackNames || []).forEach(function(name) {
+    if (typeof name === 'string' && name.trim() && !categoriesByName[name.trim()]) {
+      addCategory(name.trim());
+    }
+  });
+
+  var normalizedItems = sourceItems.map(function(sourceItem) {
+    var item = copyRecord(sourceItem);
+    var category = item.categoryId ? (categoriesBySourceId[item.categoryId] || categoriesById[item.categoryId]) : null;
+    if (!category) {
+      var legacyName = typeof item.category === 'string' ? item.category.trim() :
+        (typeof item.categoryName === 'string' ? item.categoryName.trim() : '');
+      category = categoriesByName[legacyName];
+      if (!category) {
+        category = addCategory(legacyName || DEFAULT_CATEGORIES[0]);
+      }
+    }
+
+    item.categoryId = category.id;
+    delete item.category;
+    delete item.categoryName;
+    if (typeof item.id !== 'string' || !item.id) {
+      item.id = createId('item');
+    }
+    if (typeof item.text !== 'string') {
+      item.text = '';
+    }
+    if (typeof item.packed !== 'boolean') {
+      item.packed = Boolean(item.packed);
+    }
+    return item;
+  });
+
+  if (!categories.length) {
+    DEFAULT_CATEGORIES.forEach(function(name) {
+      addCategory(name);
+    });
+  }
+
+  return { categories: categories, items: normalizedItems };
+}
+
+function normalizeListRecord(sourceList, fallbackCategories, usedCategoryIds) {
+  var list = copyRecord(sourceList);
+  var categorySource = Array.isArray(sourceList.categories) ? sourceList.categories : fallbackCategories;
+  var normalized = normalizeCategoryCollection(categorySource, sourceList.items, [], usedCategoryIds);
+  list.id = typeof sourceList.id === 'string' && sourceList.id ? sourceList.id : createId('list');
+  list.name = typeof sourceList.name === 'string' && sourceList.name.trim() ? sourceList.name.trim() : 'My Packing List';
+  list.categories = normalized.categories;
+  list.items = normalized.items;
+  list.tripDetails = normalizeTripDetails(sourceList.tripDetails);
+  return list;
+}
+
+function normalizeTemplate(template, fallbackCategories, usedCategoryIds) {
   if (!template || typeof template !== 'object' || Array.isArray(template) ||
       typeof template.name !== 'string' || !template.name.trim() || !Array.isArray(template.items)) {
     return null;
   }
 
-  return {
-    id: typeof template.id === 'string' && template.id ? template.id : createId('template'),
-    name: template.name.trim(),
-    items: template.items.filter(function(item) {
-      return item && typeof item.text === 'string' && item.text.trim() &&
-        typeof item.category === 'string' && item.category.trim();
-    }).map(function(item) {
-      return { text: item.text, category: item.category };
-    }),
-    tripDetails: normalizeTripDetails(template.tripDetails)
-  };
+  var normalized = normalizeCategoryCollection(template.categories, template.items, fallbackCategories, usedCategoryIds);
+  var result = copyRecord(template);
+  result.id = typeof template.id === 'string' && template.id ? template.id : createId('template');
+  result.name = template.name.trim();
+  result.categories = normalized.categories;
+  result.items = normalized.items.map(function(item) {
+    var templateItem = copyRecord(item);
+    delete templateItem.id;
+    delete templateItem.packed;
+    return templateItem;
+  });
+  result.tripDetails = normalizeTripDetails(template.tripDetails);
+  return result;
 }
 
-function normalizeTemplates(templates) {
-  if (!Array.isArray(templates)) {
+function normalizeTemplates(templates, fallbackCategories, usedCategoryIds) {
+  if (templates === undefined || templates === null) {
     return [];
   }
+  if (!Array.isArray(templates)) {
+    throw new Error('Saved custom templates have an unsupported structure. Original data was preserved.');
+  }
 
-  return templates.map(normalizeTemplate).filter(function(template) {
-    return template !== null;
+  var normalized = [];
+  templates.forEach(function(template) {
+    var result = normalizeTemplate(template, fallbackCategories, usedCategoryIds);
+    if (!result) {
+      throw new Error('A saved custom template has an unsupported structure. Original data was preserved.');
+    }
+    normalized.push(result);
   });
+  return normalized;
 }
 
 function getAllTemplates() {
-  return BUILT_IN_TEMPLATES.concat(normalizeTemplates(appState.templates));
+  return BUILT_IN_TEMPLATES.map(function(template) {
+    return normalizeTemplate(template, template.categories);
+  }).concat(normalizeTemplates(appState.templates));
 }
 
-function ensureCategories(categoryList) {
-  var unique = [];
-  var list = Array.isArray(categoryList) ? categoryList : [];
-
-  list.forEach(function(category) {
-    var trimmed = normalizeCategoryName(category);
-    if (unique.indexOf(trimmed) === -1) {
-      unique.push(trimmed);
-    }
-  });
-
-  DEFAULT_CATEGORIES.forEach(function(category) {
-    if (unique.indexOf(category) === -1) {
-      unique.unshift(category);
-    }
-  });
-
-  return unique;
+function getCategories(listRecord) {
+  var owner = listRecord || getActiveList();
+  return owner && Array.isArray(owner.categories) ? owner.categories : [];
 }
 
-function getCategories() {
-  if (appState && Array.isArray(appState.categories) && appState.categories.length) {
-    return appState.categories;
-  }
-  return DEFAULT_CATEGORIES.slice(0);
+function getCategoryById(categoryId, categories) {
+  return (categories || getCategories()).filter(function(category) {
+    return category.id === categoryId;
+  })[0] || null;
 }
 
-function normalizeCategory(category) {
-  var normalized = normalizeCategoryName(category);
-  return getCategories().indexOf(normalized) >= 0 ? normalized : 'Clothes';
+function normalizeCategory(categoryId, categories) {
+  var category = getCategoryById(categoryId, categories);
+  var categoryList = categories || getCategories();
+  return category ? category.id : (categoryList[0] ? categoryList[0].id : '');
 }
 
-function normalizeItem(item, categoriesList) {
-  categoriesList = categoriesList || DEFAULT_CATEGORIES.slice(0);
-  var normalizedCategory = normalizeCategoryName(item && item.category);
-  var categorySet = ensureCategories(categoriesList);
-
-  if (categorySet.indexOf(normalizedCategory) === -1) {
-    categorySet.push(normalizedCategory);
-  }
-
-  return {
-    id: item && item.id ? item.id : createId('item'),
-    text: typeof item.text === 'string' ? item.text.trim() : '',
-    packed: !!(item && item.packed),
-    category: normalizedCategory
-  };
+function normalizeItem(item, categories) {
+  var result = copyRecord(item);
+  result.id = typeof result.id === 'string' && result.id ? result.id : createId('item');
+  result.text = typeof result.text === 'string' ? result.text : '';
+  result.packed = typeof result.packed === 'boolean' ? result.packed : Boolean(result.packed);
+  result.categoryId = normalizeCategory(result.categoryId || result.category, categories);
+  delete result.category;
+  return result;
 }
 
 function createList(name) {
+  var categories = DEFAULT_CATEGORIES.map(function(categoryName) {
+    return createCategory(categoryName);
+  });
   return {
     id: createId('list'),
     name: (name || '').trim() || 'My Packing List',
     tripDetails: emptyTripDetails(),
+    categories: categories,
     items: []
   };
 }
@@ -312,89 +427,117 @@ function getActiveList() {
   })[0] || appState.lists[0];
 }
 
-function loadState() {
-  try {
-    var savedLists = localStorage.getItem(STORAGE_KEY);
+function normalizeAppState(sourceState) {
+  var source = copyRecord(sourceState);
+  var globalCategories = Array.isArray(source.categories) ? source.categories : [];
+  var usedCategoryIds = {};
+  var sourceLists = Array.isArray(source.lists) ? source.lists : [];
+  var lists = sourceLists.map(function(sourceList) {
+    return normalizeListRecord(sourceList, globalCategories, usedCategoryIds);
+  });
 
-    if (savedLists) {
-      var parsed = JSON.parse(savedLists);
+  if (!lists.length) {
+    throw new Error('Saved packing data contains no lists. Original data was preserved.');
+  }
 
-      if (parsed && Array.isArray(parsed.lists) && parsed.lists.length > 0) {
-        var categories = ensureCategories(parsed.categories || DEFAULT_CATEGORIES.slice(0));
-        var normalizedLists = parsed.lists.map(function(list) {
-          return {
-            id: list.id || createId('list'),
-            name: (list.name || '').trim() || 'My Packing List',
-            tripDetails: normalizeTripDetails(list.tripDetails),
-            items: Array.isArray(list.items)
-              ? list.items.map(function(item) {
-                  return normalizeItem(item, categories);
-                }).filter(function(item) {
-                  return item.text;
-                })
-              : []
-          };
-        });
+  var templates = normalizeTemplates(source.templates, globalCategories, usedCategoryIds);
+  var activeListId = lists.some(function(listItem) {
+    return listItem.id === source.activeListId;
+  }) ? source.activeListId : lists[0].id;
 
-        var activeListId = normalizedLists.some(function(list) {
-          return list.id === parsed.activeListId;
-        }) ? parsed.activeListId : normalizedLists[0].id;
+  delete source.categories;
+  source.schemaVersion = SCHEMA_VERSION;
+  source.lists = lists;
+  source.templates = templates;
+  source.activeListId = activeListId;
+  return source;
+}
 
-        return {
-          lists: normalizedLists,
-          categories: categories,
-          activeListId: activeListId,
-          templates: normalizeTemplates(parsed.templates)
-        };
+function backupBeforeMigration(sourceKey, rawValue) {
+  var backupRecord = JSON.stringify({
+    sourceKey: sourceKey,
+    savedAt: new Date().toISOString(),
+    rawValue: rawValue
+  });
+  var existingBackup = localStorage.getItem(MIGRATION_BACKUP_KEY);
+  if (existingBackup) {
+    try {
+      var existingRecord = JSON.parse(existingBackup);
+      if (existingRecord.sourceKey === sourceKey && existingRecord.rawValue === rawValue) {
+        return;
       }
+    } catch (error) {
+      // Preserve an unreadable prior backup and write this snapshot separately.
     }
-  } catch (error) {
-    console.warn('Could not read saved packing lists:', error);
+    localStorage.setItem(MIGRATION_BACKUP_KEY + '-' + createId('snapshot'), backupRecord);
+    return;
+  }
+
+  localStorage.setItem(MIGRATION_BACKUP_KEY, backupRecord);
+}
+
+function loadState() {
+  var savedState = localStorage.getItem(STORAGE_KEY);
+  if (savedState !== null) {
+    var parsedState;
+    try {
+      parsedState = JSON.parse(savedState);
+    } catch (error) {
+      console.error('Saved packing data is invalid and was left untouched.', error);
+      throw new Error('Saved packing data could not be read. It has not been changed.');
+    }
+
+    if (!parsedState || typeof parsedState !== 'object' || Array.isArray(parsedState) ||
+      !Array.isArray(parsedState.lists) || parsedState.lists.length === 0) {
+      throw new Error('Saved packing data has an unsupported structure. It has not been changed.');
+    }
+
+    var normalizedState = normalizeAppState(parsedState);
+    if (parsedState.schemaVersion !== SCHEMA_VERSION) {
+      backupBeforeMigration(STORAGE_KEY, savedState);
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(normalizedState));
+    }
+    return normalizedState;
   }
 
   var legacyItems = localStorage.getItem(LEGACY_STORAGE_KEY);
-
-  if (legacyItems) {
+  if (legacyItems !== null) {
+    var parsedLegacy;
     try {
-      var parsedLegacy = JSON.parse(legacyItems);
-
-      if (Array.isArray(parsedLegacy)) {
-        var migratedList = createList('My Packing List');
-        migratedList.items = parsedLegacy.map(function(item) {
-          return normalizeItem(item, DEFAULT_CATEGORIES.slice(0));
-        }).filter(function(item) {
-          return item.text;
-        });
-
-        var migratedState = {
-          lists: [migratedList],
-          categories: DEFAULT_CATEGORIES.slice(0),
-          activeListId: migratedList.id,
-          templates: []
-        };
-
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(migratedState));
-        return migratedState;
-      }
+      parsedLegacy = JSON.parse(legacyItems);
     } catch (error) {
-      console.warn('Could not read legacy packing list:', error);
+      console.error('Legacy packing data is invalid and was left untouched.', error);
+      throw new Error('Legacy packing data could not be read. It has not been changed.');
     }
+
+    if (!Array.isArray(parsedLegacy)) {
+      throw new Error('Legacy packing data has an unsupported structure. It has not been changed.');
+    }
+
+    var migratedList = createList('My Packing List');
+    migratedList.items = parsedLegacy;
+    var migratedState = normalizeAppState({
+      lists: [migratedList],
+      categories: DEFAULT_CATEGORIES,
+      activeListId: migratedList.id,
+      templates: []
+    });
+    backupBeforeMigration(LEGACY_STORAGE_KEY, legacyItems);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(migratedState));
+    return migratedState;
   }
 
-  var defaultList = createList('My Packing List');
-  var initialState = {
-    lists: [defaultList],
-    categories: DEFAULT_CATEGORIES.slice(0),
-    activeListId: defaultList.id,
+  var initialState = normalizeAppState({
+    lists: [createList('My Packing List')],
     templates: []
-  };
-
+  });
   localStorage.setItem(STORAGE_KEY, JSON.stringify(initialState));
   return initialState;
 }
 
 function saveState() {
-  appState.categories = ensureCategories(appState.categories || DEFAULT_CATEGORIES.slice(0));
+  appState.schemaVersion = SCHEMA_VERSION;
+  delete appState.categories;
   appState.templates = normalizeTemplates(appState.templates);
   localStorage.setItem(STORAGE_KEY, JSON.stringify(appState));
 }
@@ -413,7 +556,7 @@ function exportData() {
 
   var exportFile = {
     application: 'Packing List',
-    formatVersion: 1,
+    formatVersion: 2,
     exportedAt: new Date().toISOString(),
     data: exportStateWithTemplates(stateToExport)
   };
@@ -440,15 +583,49 @@ function exportStateWithTemplates(state) {
 }
 
 function validateImportData(importFile) {
-  if (!importFile || importFile.application !== 'Packing List' || importFile.formatVersion !== 1) {
+  if (!importFile || importFile.application !== 'Packing List' ||
+      (importFile.formatVersion !== 1 && importFile.formatVersion !== 2)) {
     return null;
   }
 
   var importedState = importFile.data;
   if (!importedState || typeof importedState !== 'object' || Array.isArray(importedState) ||
       !Array.isArray(importedState.lists) || importedState.lists.length === 0 ||
-      !Array.isArray(importedState.categories) || importedState.categories.length === 0 ||
       typeof importedState.activeListId !== 'string') {
+    return null;
+  }
+
+  var newSchema = importedState.schemaVersion === SCHEMA_VERSION || importFile.formatVersion >= 2;
+  if (newSchema) {
+    if (!importedState.lists.every(function(listItem) {
+      if (!listItem || !Array.isArray(listItem.categories) || listItem.categories.length === 0 ||
+          !Array.isArray(listItem.items)) {
+        return false;
+      }
+      var categoryIds = {};
+      if (!listItem.categories.every(function(category) {
+        if (!category || typeof category.id !== 'string' || !category.id || categoryIds[category.id] ||
+            typeof category.name !== 'string' || !category.name.trim()) {
+          return false;
+        }
+        categoryIds[category.id] = true;
+        return true;
+      })) {
+        return false;
+      }
+      return listItem.items.every(function(item) {
+        return item && typeof item === 'object' && !Array.isArray(item) &&
+          typeof item.id === 'string' && !!item.id && typeof item.text === 'string' &&
+          typeof item.packed === 'boolean' && typeof item.categoryId === 'string' &&
+          !!categoryIds[item.categoryId];
+      }) && isValidTripDetails(listItem.tripDetails);
+    })) {
+      return null;
+    }
+  } else if (!Array.isArray(importedState.categories) || importedState.categories.length === 0 ||
+      !importedState.categories.every(function(category) {
+        return typeof category === 'string' && !!category.trim();
+      })) {
     return null;
   }
 
@@ -470,7 +647,10 @@ function validateImportData(importFile) {
       if (!item || typeof item !== 'object' || Array.isArray(item) ||
           typeof item.id !== 'string' || !item.id || itemIds[item.id] ||
           typeof item.text !== 'string' || !item.text.trim() || typeof item.packed !== 'boolean' ||
-          typeof item.category !== 'string' || !item.category.trim()) {
+          (newSchema
+            ? (typeof item.categoryId !== 'string' || !item.categoryId ||
+              !listItem.categories.some(function(category) { return category.id === item.categoryId; }))
+            : (typeof item.category !== 'string' || !item.category.trim()))) {
         return false;
       }
 
@@ -479,9 +659,7 @@ function validateImportData(importFile) {
     });
   });
 
-  if (!validLists || !importedState.categories.every(function(category) {
-    return typeof category === 'string' && !!category.trim();
-  }) || !listIds[importedState.activeListId]) {
+  if (!validLists || !listIds[importedState.activeListId]) {
     return null;
   }
 
@@ -495,15 +673,38 @@ function validateImportData(importFile) {
       if (!template || typeof template !== 'object' || Array.isArray(template) ||
           typeof template.id !== 'string' || !template.id || templateIds[template.id] ||
           typeof template.name !== 'string' || !template.name.trim() || !Array.isArray(template.items) ||
-          !isValidTripDetails(template.tripDetails)) {
+          !isValidTripDetails(template.tripDetails) ||
+          (newSchema && (!Array.isArray(template.categories) || template.categories.length === 0))) {
+        return false;
+      }
+
+      if (newSchema && !template.categories.every(function(category) {
+        return category && typeof category.id === 'string' && !!category.id &&
+          typeof category.name === 'string' && !!category.name.trim();
+      })) {
+        return false;
+      }
+
+      var templateCategoryIds = {};
+      if (newSchema && !template.categories.every(function(category) {
+        if (templateCategoryIds[category.id]) {
+          return false;
+        }
+        templateCategoryIds[category.id] = true;
+        return true;
+      })) {
         return false;
       }
 
       templateIds[template.id] = true;
       return template.items.every(function(item) {
-        return item && typeof item === 'object' && !Array.isArray(item) &&
-          typeof item.text === 'string' && !!item.text.trim() &&
-          typeof item.category === 'string' && !!item.category.trim();
+        if (!item || typeof item !== 'object' || Array.isArray(item) ||
+            typeof item.text !== 'string' || !item.text.trim()) {
+          return false;
+        }
+        return newSchema
+          ? typeof item.categoryId === 'string' && !!templateCategoryIds[item.categoryId]
+          : typeof item.category === 'string' && !!item.category.trim();
       });
     });
 
@@ -517,7 +718,11 @@ function validateImportData(importFile) {
     return null;
   }
 
-  return importedState;
+  try {
+    return normalizeAppState(importedState);
+  } catch (error) {
+    return null;
+  }
 }
 
 function importDataFile(file) {
@@ -549,7 +754,6 @@ function importDataFile(file) {
     }
 
     appState = importedState;
-    appState.templates = normalizeTemplates(importedState.templates);
     appState.lists.forEach(function(listItem) {
       listItem.tripDetails = normalizeTripDetails(listItem.tripDetails);
     });
@@ -567,13 +771,15 @@ function importDataFile(file) {
 
 function renderCategoryOptions() {
   var categories = getCategories();
-  var selectedValue = categorySelect.value && categories.indexOf(categorySelect.value) >= 0 ? categorySelect.value : categories[0];
+  var selectedValue = getCategoryById(categorySelect.value, categories)
+    ? categorySelect.value
+    : (categories[0] ? categories[0].id : '');
 
   categorySelect.innerHTML = '';
   categories.forEach(function(category) {
     var option = document.createElement('option');
-    option.value = category;
-    option.textContent = category;
+    option.value = category.id;
+    option.textContent = category.name;
     categorySelect.appendChild(option);
   });
   categorySelect.value = selectedValue;
@@ -657,22 +863,42 @@ function closeTripDetailsModal() {
 function renderCategoryManager() {
   categoryList.innerHTML = '';
 
-  getCategories().forEach(function(category) {
+  getCategories().forEach(function(category, index, categories) {
     var row = document.createElement('div');
     row.className = 'category-row';
 
     var label = document.createElement('span');
-    label.textContent = category;
+    label.textContent = category.name;
 
     var actions = document.createElement('div');
     actions.className = 'category-row-actions';
+
+    var moveUpButton = document.createElement('button');
+    moveUpButton.type = 'button';
+    moveUpButton.className = 'secondary-btn thin-btn';
+    moveUpButton.textContent = 'Up';
+    moveUpButton.setAttribute('aria-label', 'Move ' + category.name + ' up');
+    moveUpButton.disabled = index === 0;
+    moveUpButton.addEventListener('click', function() {
+      moveCategory(category.id, -1);
+    });
+
+    var moveDownButton = document.createElement('button');
+    moveDownButton.type = 'button';
+    moveDownButton.className = 'secondary-btn thin-btn';
+    moveDownButton.textContent = 'Down';
+    moveDownButton.setAttribute('aria-label', 'Move ' + category.name + ' down');
+    moveDownButton.disabled = index === categories.length - 1;
+    moveDownButton.addEventListener('click', function() {
+      moveCategory(category.id, 1);
+    });
 
     var renameButton = document.createElement('button');
     renameButton.type = 'button';
     renameButton.className = 'secondary-btn thin-btn';
     renameButton.textContent = 'Rename';
     renameButton.addEventListener('click', function() {
-      renameCategory(category);
+      renameCategory(category.id);
     });
 
     var deleteButton = document.createElement('button');
@@ -680,9 +906,11 @@ function renderCategoryManager() {
     deleteButton.className = 'danger-btn thin-btn';
     deleteButton.textContent = 'Delete';
     deleteButton.addEventListener('click', function() {
-      deleteCategory(category);
+      deleteCategory(category.id);
     });
 
+    actions.appendChild(moveUpButton);
+    actions.appendChild(moveDownButton);
     actions.appendChild(renameButton);
     actions.appendChild(deleteButton);
     row.appendChild(label);
@@ -777,14 +1005,27 @@ function saveCurrentListAsTemplate() {
     return;
   }
 
-  appState.templates = normalizeTemplates(appState.templates).concat({
+  var categoryIds = {};
+  var templateCategories = activeList.categories.map(function(category) {
+    var templateCategory = copyRecord(category);
+    templateCategory.id = createId('category');
+    categoryIds[category.id] = templateCategory.id;
+    return templateCategory;
+  });
+  var template = {
     id: createId('template'),
     name: templateName,
+    categories: templateCategories,
     items: activeList.items.map(function(item) {
-      return { text: item.text, category: item.category };
+      var templateItem = copyRecord(item);
+      delete templateItem.id;
+      delete templateItem.packed;
+      templateItem.categoryId = categoryIds[item.categoryId];
+      return templateItem;
     }),
     tripDetails: normalizeTripDetails(activeList.tripDetails)
-  });
+  };
+  appState.templates = normalizeTemplates(appState.templates).concat(template);
   saveState();
   renderTemplatesManager();
 }
@@ -844,25 +1085,27 @@ function createListFromTemplate(template) {
     return;
   }
 
-  var categories = getCategories().slice(0);
+  var categoryIds = {};
+  var categories = template.categories.map(function(category) {
+    var copy = copyRecord(category);
+    copy.id = createId('category');
+    categoryIds[category.id] = copy.id;
+    return copy;
+  });
   var newList = {
     id: createId('list'),
     name: listName,
     tripDetails: normalizeTripDetails(template.tripDetails),
+    categories: categories,
     items: template.items.map(function(item) {
-      if (categories.indexOf(item.category) === -1) {
-        categories.push(item.category);
-      }
-      return {
-        id: createId('item'),
-        text: item.text,
-        packed: false,
-        category: item.category
-      };
+      var copy = copyRecord(item);
+      copy.id = createId('item');
+      copy.packed = false;
+      copy.categoryId = categoryIds[item.categoryId] || categories[0].id;
+      return copy;
     })
   };
 
-  appState.categories = ensureCategories(categories);
   appState.lists.push(newList);
   appState.activeListId = newList.id;
   saveState();
@@ -884,9 +1127,11 @@ function closeMoveCategoryModal() {
   pendingCategoryToDelete = null;
 }
 
-function openMoveCategoryModal(category) {
-  var otherCategories = getCategories().filter(function(item) {
-    return item !== category;
+function openMoveCategoryModal(categoryId) {
+  var activeList = getActiveList();
+  var category = getCategoryById(categoryId, activeList.categories);
+  var otherCategories = getCategories(activeList).filter(function(item) {
+    return item.id !== categoryId;
   });
   moveCategorySelect.innerHTML = '';
 
@@ -897,18 +1142,25 @@ function openMoveCategoryModal(category) {
 
   otherCategories.forEach(function(item) {
     var option = document.createElement('option');
-    option.value = item;
-    option.textContent = item;
+    option.value = item.id;
+    option.textContent = item.name;
     moveCategorySelect.appendChild(option);
   });
 
-  moveCategoryMessage.textContent = '"' + category + '" contains items. Choose a category to move them into before deleting it.';
-  pendingCategoryToDelete = category;
+  var itemCount = getCategoryItemCount(categoryId, activeList);
+  moveCategoryMessage.textContent = 'Move ' + itemCount + ' item' + (itemCount === 1 ? '' : 's') + ' from "' + category.name + '" to another category in this packing list, then delete it.';
+  pendingCategoryToDelete = categoryId;
   setModalVisibility(moveCategoryModal, true);
 }
 
-function renameCategory(currentCategory) {
-  var newName = prompt('Rename category:', currentCategory);
+function renameCategory(categoryId) {
+  var activeList = getActiveList();
+  var category = getCategoryById(categoryId, activeList.categories);
+  if (!category) {
+    return;
+  }
+
+  var newName = prompt('Rename category:', category.name);
 
   if (newName === null) {
     return;
@@ -920,34 +1172,16 @@ function renameCategory(currentCategory) {
     return;
   }
 
-  var existingCategory = getCategories().find(function(category) {
-    return category.toLowerCase() === trimmedName.toLowerCase();
+  var existingCategory = getCategories(activeList).find(function(item) {
+    return item.id !== categoryId && item.name.toLowerCase() === trimmedName.toLowerCase();
   });
 
-  if (existingCategory && existingCategory !== currentCategory) {
+  if (existingCategory) {
     alert('A category with that name already exists.');
     return;
   }
 
-  appState.categories = getCategories().map(function(category) {
-    return category === currentCategory ? trimmedName : category;
-  });
-
-  appState.lists.forEach(function(listItem) {
-    listItem.items.forEach(function(item) {
-      if (item.category === currentCategory) {
-        item.category = trimmedName;
-      }
-    });
-  });
-
-  appState.templates.forEach(function(template) {
-    template.items.forEach(function(item) {
-      if (item.category === currentCategory) {
-        item.category = trimmedName;
-      }
-    });
-  });
+  category.name = trimmedName;
 
   saveState();
   renderApp();
@@ -968,63 +1202,67 @@ function addCategory() {
   }
 
   if (getCategories().some(function(category) {
-    return category.toLowerCase() === trimmedName.toLowerCase();
+    return category.name.toLowerCase() === trimmedName.toLowerCase();
   })) {
     alert('A category with that name already exists.');
     return;
   }
 
-  appState.categories = getCategories().concat(trimmedName);
+  getActiveList().categories.push(createCategory(trimmedName));
   saveState();
   renderApp();
   renderCategoryManager();
 }
 
-function deleteCategory(category) {
-  if (getCategories().length <= 1) {
+function getCategoryItemCount(categoryId, listRecord) {
+  var owner = listRecord || getActiveList();
+  return owner.items.filter(function(item) {
+    return item.categoryId === categoryId;
+  }).length;
+}
+
+function moveCategory(categoryId, offset) {
+  var categories = getCategories();
+  var index = categories.findIndex(function(category) {
+    return category.id === categoryId;
+  });
+  var destination = index + offset;
+  if (index < 0 || destination < 0 || destination >= categories.length) {
+    return;
+  }
+
+  var category = categories.splice(index, 1)[0];
+  categories.splice(destination, 0, category);
+  saveState();
+  renderApp();
+  renderCategoryManager();
+}
+
+function deleteCategory(categoryId) {
+  var activeList = getActiveList();
+  if (activeList.categories.length <= 1) {
     alert('At least one category must remain.');
     return;
   }
 
-  var itemCount = 0;
-  appState.lists.forEach(function(listItem) {
-    itemCount += listItem.items.filter(function(item) {
-      return item.category === category;
-    }).length;
-  });
-  appState.templates.forEach(function(template) {
-    itemCount += template.items.filter(function(item) {
-      return item.category === category;
-    }).length;
-  });
-
-  if (itemCount > 0) {
-    openMoveCategoryModal(category);
+  if (getCategoryItemCount(categoryId, activeList) > 0) {
+    openMoveCategoryModal(categoryId);
     return;
   }
 
-  appState.categories = getCategories().filter(function(item) {
-    return item !== category;
+  activeList.categories = activeList.categories.filter(function(item) {
+    return item.id !== categoryId;
   });
   saveState();
   renderApp();
   closeCategoryModal();
 }
 
-function moveCategoryItems(oldCategory, newCategory) {
-  appState.lists.forEach(function(listItem) {
-    listItem.items.forEach(function(item) {
-      if (item.category === oldCategory) {
-        item.category = newCategory;
-      }
-    });
-  });
-  appState.templates.forEach(function(template) {
-    template.items.forEach(function(item) {
-      if (item.category === oldCategory) {
-        item.category = newCategory;
-      }
-    });
+function moveCategoryItems(oldCategoryId, newCategoryId, listRecord) {
+  listRecord.items.forEach(function(item) {
+    if (item.categoryId === oldCategoryId) {
+      item.categoryId = newCategoryId;
+    }
   });
 }
 
@@ -1057,13 +1295,13 @@ function createItemRow(currentList, item) {
 
     var editCategory = document.createElement('select');
     editCategory.className = 'edit-select';
-    getCategories().forEach(function(category) {
+    getCategories(currentList).forEach(function(category) {
       var option = document.createElement('option');
-      option.value = category;
-      option.textContent = category;
+      option.value = category.id;
+      option.textContent = category.name;
       editCategory.appendChild(option);
     });
-    editCategory.value = item.category;
+    editCategory.value = item.categoryId;
 
     var actionGroup = document.createElement('div');
     actionGroup.className = 'item-actions';
@@ -1081,7 +1319,7 @@ function createItemRow(currentList, item) {
       }
 
       item.text = updatedText;
-      item.category = normalizeCategory(editCategory.value);
+      item.categoryId = normalizeCategory(editCategory.value, currentList.categories);
       editingItemId = null;
       saveState();
       renderApp();
@@ -1170,21 +1408,23 @@ function renderList() {
   }
 
   if (activeList.items.length === 0) {
-    getCategories().forEach(renderEmptyCategory);
+    getCategories(activeList).forEach(function(category) {
+      renderEmptyCategory(category.name);
+    });
     updateCount();
     return;
   }
 
-  getCategories().forEach(function(category) {
+  getCategories(activeList).forEach(function(category) {
     var categoryItems = activeList.items.filter(function(item) {
-      return item.category === category;
+      return item.categoryId === category.id;
     });
     var group = document.createElement('li');
     group.className = 'category-group';
 
     var heading = document.createElement('h2');
     heading.className = 'category-heading';
-    heading.textContent = category;
+    heading.textContent = category.name;
 
     var groupedList = document.createElement('ul');
     groupedList.className = 'category-items';
@@ -1255,17 +1495,24 @@ function duplicateCurrentList() {
     return;
   }
 
+  var categoryIds = {};
+  var categories = activeList.categories.map(function(category) {
+    var copy = copyRecord(category);
+    copy.id = createId('category');
+    categoryIds[category.id] = copy.id;
+    return copy;
+  });
   var duplicatedList = {
     id: createId('list'),
     name: trimmedName,
     tripDetails: normalizeTripDetails(activeList.tripDetails),
+    categories: categories,
     items: activeList.items.map(function(item) {
-      return {
-        id: createId('item'),
-        text: item.text,
-        packed: false,
-        category: item.category
-      };
+      var copy = copyRecord(item);
+      copy.id = createId('item');
+      copy.packed = false;
+      copy.categoryId = categoryIds[item.categoryId];
+      return copy;
     })
   };
 
@@ -1331,11 +1578,11 @@ form.addEventListener('submit', function(event) {
     id: createId('item'),
     text: text,
     packed: false,
-    category: selectedCategory
+    categoryId: selectedCategory
   });
 
   input.value = '';
-  categorySelect.value = getCategories()[0];
+  categorySelect.value = getCategories()[0] ? getCategories()[0].id : '';
   input.focus();
   saveState();
   renderApp();
@@ -1394,16 +1641,20 @@ categoryModalCloseBtn.addEventListener('click', closeCategoryModal);
 addCategoryBtn.addEventListener('click', addCategory);
 moveCategoryCancelBtn.addEventListener('click', closeMoveCategoryModal);
 moveCategoryConfirmBtn.addEventListener('click', function() {
+  var activeList = getActiveList();
+  var categoryToDelete = pendingCategoryToDelete;
   var targetCategory = moveCategorySelect.value;
 
-  if (!targetCategory || !pendingCategoryToDelete) {
+  if (!categoryToDelete || !targetCategory || targetCategory === categoryToDelete ||
+      !getCategoryById(categoryToDelete, activeList.categories) ||
+      !getCategoryById(targetCategory, activeList.categories)) {
     closeMoveCategoryModal();
     return;
   }
 
-  moveCategoryItems(pendingCategoryToDelete, targetCategory);
-  appState.categories = getCategories().filter(function(category) {
-    return category !== pendingCategoryToDelete;
+  moveCategoryItems(categoryToDelete, targetCategory, activeList);
+  activeList.categories = activeList.categories.filter(function(category) {
+    return category.id !== categoryToDelete;
   });
   saveState();
   renderApp();
