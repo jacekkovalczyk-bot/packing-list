@@ -102,6 +102,49 @@ var moveCategoryCancelBtn = document.getElementById('move-category-cancel');
 var appState = loadState();
 var editingItemId = null;
 var pendingCategoryToDelete = null;
+var modalScrollPosition = 0;
+
+function updateModalScrollLock() {
+  var hasOpenModal = document.querySelector('.modal:not(.hidden)') !== null;
+
+  if (hasOpenModal && !document.body.classList.contains('modal-open')) {
+    modalScrollPosition = window.pageYOffset || document.documentElement.scrollTop || 0;
+    document.documentElement.classList.add('modal-open');
+    document.body.classList.add('modal-open');
+    document.body.style.top = '-' + modalScrollPosition + 'px';
+    return;
+  }
+
+  if (!hasOpenModal && document.body.classList.contains('modal-open')) {
+    document.documentElement.classList.remove('modal-open');
+    document.body.classList.remove('modal-open');
+    document.body.style.top = '';
+    window.scrollTo(0, modalScrollPosition);
+  }
+}
+
+function setModalVisibility(modal, isVisible) {
+  modal.classList.toggle('hidden', !isVisible);
+  updateModalScrollLock();
+}
+
+function closeTopmostModal() {
+  var openModals = document.querySelectorAll('.modal:not(.hidden)');
+  var topModal = openModals[openModals.length - 1];
+  if (!topModal) {
+    return;
+  }
+
+  if (topModal === categoryModal) {
+    closeCategoryModal();
+  } else if (topModal === moveCategoryModal) {
+    closeMoveCategoryModal();
+  } else if (topModal === templatesModal) {
+    closeTemplatesModal();
+  } else if (topModal === tripDetailsModal) {
+    closeTripDetailsModal();
+  }
+}
 
 function createId(prefix) {
   return prefix + '-' + Date.now() + '-' + Math.random().toString(16).slice(2);
@@ -603,11 +646,11 @@ function openTripDetailsModal() {
   tripTypeSelect.value = details.tripType;
   tripNotesInput.value = details.notes;
   updateTripDateValidation();
-  tripDetailsModal.classList.remove('hidden');
+  setModalVisibility(tripDetailsModal, true);
 }
 
 function closeTripDetailsModal() {
-  tripDetailsModal.classList.add('hidden');
+  setModalVisibility(tripDetailsModal, false);
   tripReturnDateInput.setCustomValidity('');
 }
 
@@ -706,11 +749,11 @@ function renderTemplatesManager() {
 
 function openTemplatesModal() {
   renderTemplatesManager();
-  templatesModal.classList.remove('hidden');
+  setModalVisibility(templatesModal, true);
 }
 
 function closeTemplatesModal() {
-  templatesModal.classList.add('hidden');
+  setModalVisibility(templatesModal, false);
 }
 
 function saveCurrentListAsTemplate() {
@@ -828,16 +871,16 @@ function createListFromTemplate(template) {
 }
 
 function closeCategoryModal() {
-  categoryModal.classList.add('hidden');
+  setModalVisibility(categoryModal, false);
 }
 
 function openCategoryModal() {
   renderCategoryManager();
-  categoryModal.classList.remove('hidden');
+  setModalVisibility(categoryModal, true);
 }
 
 function closeMoveCategoryModal() {
-  moveCategoryModal.classList.add('hidden');
+  setModalVisibility(moveCategoryModal, false);
   pendingCategoryToDelete = null;
 }
 
@@ -861,7 +904,7 @@ function openMoveCategoryModal(category) {
 
   moveCategoryMessage.textContent = '"' + category + '" contains items. Choose a category to move them into before deleting it.';
   pendingCategoryToDelete = category;
-  moveCategoryModal.classList.remove('hidden');
+  setModalVisibility(moveCategoryModal, true);
 }
 
 function renameCategory(currentCategory) {
@@ -1369,3 +1412,9 @@ moveCategoryConfirmBtn.addEventListener('click', function() {
 });
 
 renderApp();
+
+document.addEventListener('keydown', function(event) {
+  if (event.key === 'Escape') {
+    closeTopmostModal();
+  }
+});
