@@ -96,7 +96,6 @@ var tripDetailsForm = document.getElementById('trip-details-form');
 var tripDestinationInput = document.getElementById('trip-destination');
 var tripDepartureDateInput = document.getElementById('trip-departure-date');
 var tripReturnDateInput = document.getElementById('trip-return-date');
-var tripTypeSelect = document.getElementById('trip-type');
 var tripNotesInput = document.getElementById('trip-notes');
 var tripDetailsCloseBtn = document.getElementById('trip-details-close');
 var tripDetailsCancelBtn = document.getElementById('trip-details-cancel');
@@ -1023,20 +1022,12 @@ function renderTripDetails() {
     column.appendChild(field);
   }
 
-  var leftColumn = document.createElement('div');
-  leftColumn.className = 'details-column';
-  appendField(leftColumn, 'Destination', details.destination);
-  appendField(leftColumn, 'Departure Date', details.departureDate);
-  appendField(leftColumn, 'Return Date', details.returnDate);
-
-  var rightColumn = document.createElement('div');
-  rightColumn.className = 'details-column';
-  appendField(rightColumn, 'Trip Type', details.tripType);
-  appendField(rightColumn, 'Notes', details.notes);
-  rightColumn.appendChild(document.createElement('div')).className = 'detail-field detail-field-empty';
-
-  tripDetailsDisplay.appendChild(leftColumn);
-  tripDetailsDisplay.appendChild(rightColumn);
+  // Two rows, two columns: Destination | Notes; Departure Date | Return Date.
+  // The grid is populated row-first to keep dates horizontally aligned.
+  appendField(tripDetailsDisplay, 'Destination', details.destination);
+  appendField(tripDetailsDisplay, 'Notes', details.notes);
+  appendField(tripDetailsDisplay, 'Departure Date', details.departureDate);
+  appendField(tripDetailsDisplay, 'Return Date', details.returnDate);
 }
 
 function updateTripDateValidation() {
@@ -1055,7 +1046,6 @@ function openTripDetailsModal() {
   tripDestinationInput.value = details.destination;
   tripDepartureDateInput.value = details.departureDate;
   tripReturnDateInput.value = details.returnDate;
-  tripTypeSelect.value = details.tripType;
   tripNotesInput.value = details.notes;
   updateTripDateValidation();
   setModalVisibility(tripDetailsModal, true);
@@ -1851,7 +1841,7 @@ tripDetailsForm.addEventListener('submit', function(event) {
     destination: tripDestinationInput.value.trim(),
     departureDate: tripDepartureDateInput.value,
     returnDate: tripReturnDateInput.value,
-    tripType: tripTypeSelect.value,
+    tripType: getActiveList().tripDetails ? getActiveList().tripDetails.tripType : '',
     notes: tripNotesInput.value.trim()
   });
   saveState();

@@ -44,14 +44,6 @@
           <progress id="packing-progress" max="100" value="0" aria-label="Packing progress"></progress>
         </section>
 
-        <section class="trip-details" aria-labelledby="trip-details-title">
-          <div class="trip-details-header">
-            <h2 id="trip-details-title">Details</h2>
-            <button id="edit-trip-details-btn" class="secondary-btn" type="button">Edit Details</button>
-          </div>
-          <div id="trip-details-display" class="trip-details-grid"></div>
-        </section>
-
         <form id="packing-form" class="packing-form" autocomplete="off">
           <label class="sr-only" for="item-input">Add packing item</label>
           <input
@@ -91,6 +83,14 @@
           </form>
           <ul id="todo-list" class="todo-list" aria-live="polite"></ul>
         </section>
+
+        <section class="trip-details" aria-labelledby="trip-details-title">
+          <div class="trip-details-header">
+            <h2 id="trip-details-title">Details</h2>
+            <button id="edit-trip-details-btn" class="secondary-btn" type="button">Edit Details</button>
+          </div>
+          <div id="trip-details-display" class="trip-details-grid"></div>
+        </section>
       </section>
     </main>
 
@@ -126,16 +126,6 @@
           <label class="trip-detail-field" for="trip-return-date">
             <span>Return Date</span>
             <input id="trip-return-date" type="date" />
-          </label>
-          <label class="trip-detail-field" for="trip-type">
-            <span>Trip Type</span>
-            <select id="trip-type">
-              <option value="">Not set</option>
-              <option value="Business">Business</option>
-              <option value="Holiday">Holiday</option>
-              <option value="Marathon">Marathon</option>
-              <option value="Other">Other</option>
-            </select>
           </label>
           <label class="trip-detail-field trip-notes-field" for="trip-notes">
             <span>Notes</span>
