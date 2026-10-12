@@ -110,6 +110,7 @@ var appState = loadState();
 var editingItemId = null;
 var pendingCategoryToDelete = null;
 var modalScrollPosition = 0;
+var selectedCategoryByListId = {};
 
 function updateModalScrollLock() {
   var hasOpenModal = document.querySelector('.modal:not(.hidden)') !== null;
@@ -754,6 +755,7 @@ function importDataFile(file) {
     }
 
     appState = importedState;
+    selectedCategoryByListId = {};
     appState.lists.forEach(function(listItem) {
       listItem.tripDetails = normalizeTripDetails(listItem.tripDetails);
     });
@@ -771,9 +773,15 @@ function importDataFile(file) {
 
 function renderCategoryOptions() {
   var categories = getCategories();
-  var selectedValue = getCategoryById(categorySelect.value, categories)
-    ? categorySelect.value
+  var activeList = getActiveList();
+  var currentValue = categorySelect.value;
+  if (getCategoryById(currentValue, categories)) {
+    selectedCategoryByListId[activeList.id] = currentValue;
+  }
+  var selectedValue = getCategoryById(selectedCategoryByListId[activeList.id], categories)
+    ? selectedCategoryByListId[activeList.id]
     : (categories[0] ? categories[0].id : '');
+  selectedCategoryByListId[activeList.id] = selectedValue;
 
   categorySelect.innerHTML = '';
   categories.forEach(function(category) {
@@ -1250,6 +1258,13 @@ function deleteCategory(categoryId) {
     return;
   }
 
+  if (categorySelect.value === categoryId || selectedCategoryByListId[activeList.id] === categoryId) {
+    var fallbackCategory = activeList.categories.filter(function(category) {
+      return category.id !== categoryId;
+    })[0];
+    selectedCategoryByListId[activeList.id] = fallbackCategory ? fallbackCategory.id : '';
+  }
+
   activeList.categories = activeList.categories.filter(function(item) {
     return item.id !== categoryId;
   });
@@ -1435,7 +1450,9 @@ function renderList() {
       emptyItem.textContent = 'No items in this category';
       groupedList.appendChild(emptyItem);
     } else {
-      categoryItems.forEach(function(item) {
+      categoryItems.slice(0).sort(function(first, second) {
+        return first.text.localeCompare(second.text, 'pl', { sensitivity: 'base' });
+      }).forEach(function(item) {
         groupedList.appendChild(createItemRow(activeList, item));
       });
     }
@@ -1567,7 +1584,7 @@ form.addEventListener('submit', function(event) {
 
   var activeList = getActiveList();
   var text = input.value.trim();
-  var selectedCategory = normalizeCategory(categorySelect.value);
+  var selectedCategory = normalizeCategory(categorySelect.value, activeList.categories);
 
   if (!text) {
     input.focus();
@@ -1582,16 +1599,28 @@ form.addEventListener('submit', function(event) {
   });
 
   input.value = '';
-  categorySelect.value = getCategories()[0] ? getCategories()[0].id : '';
+  selectedCategoryByListId[activeList.id] = selectedCategory;
+  categorySelect.value = selectedCategory;
   input.focus();
   saveState();
   renderApp();
 });
 
 listSelect.addEventListener('change', function(event) {
+  var previousList = getActiveList();
+  if (previousList && getCategoryById(categorySelect.value, previousList.categories)) {
+    selectedCategoryByListId[previousList.id] = categorySelect.value;
+  }
   appState.activeListId = event.target.value;
   saveState();
   renderApp();
+});
+
+categorySelect.addEventListener('change', function() {
+  var activeList = getActiveList();
+  if (activeList && getCategoryById(categorySelect.value, activeList.categories)) {
+    selectedCategoryByListId[activeList.id] = categorySelect.value;
+  }
 });
 
 tripDepartureDateInput.addEventListener('input', updateTripDateValidation);

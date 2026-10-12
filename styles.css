@@ -710,6 +710,33 @@ body.modal-open {
   }
 }
 
+@media (max-width: 600px) {
+  .list-actions {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    justify-content: center;
+    gap: 6px;
+    width: 100%;
+    margin-inline: auto;
+  }
+
+  .list-actions > button:not(#export-data-btn):not(#import-data-btn) {
+    width: 100%;
+    min-width: 0;
+    min-height: 44px;
+    padding: 6px 4px;
+    flex: none;
+    font-size: 0.75rem;
+    line-height: 1.15;
+    overflow-wrap: anywhere;
+  }
+
+  #export-data-btn,
+  #import-data-btn {
+    display: none;
+  }
+}
+
 @media (min-width: 700px) {
   .packing-form {
     display: grid;
