@@ -3,6 +3,8 @@ var LEGACY_STORAGE_KEY = 'packing-list-items-v1';
 var MIGRATION_BACKUP_KEY = 'packing-lists-v1-global-categories-backup';
 var SCHEMA_VERSION = 4;
 var DEFAULT_CATEGORIES = [
+  'General',
+  'Food',
   'Clothes',
   'Documents',
   'Electronics',
@@ -464,13 +466,31 @@ function getActiveList() {
   })[0] || appState.lists[0];
 }
 
+// Add shared categories without removing or changing existing list items.
+// General is placed first, while all existing category positions are retained.
+function ensureCommonCategories(listRecord) {
+  var categories = listRecord.categories;
+  var general = categories.find(function(category) { return category.name.toLowerCase() === 'general'; });
+  if (!general) {
+    general = createCategory('General');
+    categories.unshift(general);
+  } else if (categories.indexOf(general) !== 0) {
+    categories.splice(categories.indexOf(general), 1);
+    categories.unshift(general);
+  }
+  if (!categories.some(function(category) { return category.name.toLowerCase() === 'food'; })) {
+    categories.push(createCategory('Food'));
+  }
+  return listRecord;
+}
+
 function normalizeAppState(sourceState) {
   var source = copyRecord(sourceState);
   var globalCategories = Array.isArray(source.categories) ? source.categories : [];
   var usedCategoryIds = {};
   var sourceLists = Array.isArray(source.lists) ? source.lists : [];
   var lists = sourceLists.map(function(sourceList) {
-    return normalizeListRecord(sourceList, globalCategories, usedCategoryIds);
+    return ensureCommonCategories(normalizeListRecord(sourceList, globalCategories, usedCategoryIds));
   });
 
   if (!lists.length) {
@@ -530,7 +550,13 @@ function loadState() {
     }
 
     var normalizedState = normalizeAppState(parsedState);
-    if (parsedState.schemaVersion !== SCHEMA_VERSION) {
+    var categoryUpdateNeeded = parsedState.lists.some(function(listRecord) {
+      return !Array.isArray(listRecord.categories) ||
+        !listRecord.categories.some(function(category) { return category.name && category.name.toLowerCase() === 'general'; }) ||
+        !listRecord.categories.some(function(category) { return category.name && category.name.toLowerCase() === 'food'; }) ||
+        listRecord.categories[0].name.toLowerCase() !== 'general';
+    });
+    if (parsedState.schemaVersion !== SCHEMA_VERSION || categoryUpdateNeeded) {
       backupBeforeMigration(STORAGE_KEY, savedState);
       localStorage.setItem(STORAGE_KEY, JSON.stringify(normalizedState));
     }
@@ -1314,6 +1340,7 @@ function createListFromTemplate(template) {
     })
   };
 
+  ensureCommonCategories(newList);
   appState.lists.push(newList);
   appState.activeListId = newList.id;
   saveState();
@@ -1660,14 +1687,14 @@ function renderApp() {
 }
 
 function createNewList() {
-  var listName = prompt('Name your new packing list:', 'Trip ' + (appState.lists.length + 1));
+  var listName = prompt('Name your new packing list:', 'List ' + (appState.lists.length + 1));
 
   if (listName === null) {
     return;
   }
 
   var trimmedName = listName.trim();
-  var newList = createList(trimmedName || 'Trip ' + (appState.lists.length + 1));
+  var newList = createList(trimmedName || 'List ' + (appState.lists.length + 1));
   appState.lists.push(newList);
   appState.activeListId = newList.id;
   saveState();
