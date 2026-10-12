@@ -1,7 +1,7 @@
 var STORAGE_KEY = 'packing-lists-v1';
 var LEGACY_STORAGE_KEY = 'packing-list-items-v1';
 var MIGRATION_BACKUP_KEY = 'packing-lists-v1-global-categories-backup';
-var SCHEMA_VERSION = 2;
+var SCHEMA_VERSION = 4;
 var DEFAULT_CATEGORIES = [
   'Clothes',
   'Documents',
@@ -12,50 +12,51 @@ var DEFAULT_CATEGORIES = [
 var TRIP_TYPES = ['Business', 'Holiday', 'Marathon', 'Other'];
 var BUILT_IN_TEMPLATES = [
   {
+    id: 'builtin-shopping',
+    name: 'Shopping',
+    categories: ['Food', 'Cosmetics', 'Electronics'],
+    tripDetails: { destination: '', departureDate: '', returnDate: '', tripType: 'Other', notes: '' },
+    items: [
+      { text: 'Phone charger', category: 'Electronics' },
+      { text: 'Snacks', category: 'Food' },
+      { text: 'Sunscreen', category: 'Cosmetics' }
+    ]
+  },
+  {
+    id: 'builtin-business-trip',
+    name: 'Business Trip',
+    categories: ['Documents', 'Apparel & Shoes', 'Electronics'],
+    tripDetails: { destination: '', departureDate: '', returnDate: '', tripType: 'Business', notes: '' },
+    items: [
+      { text: 'Business clothes', category: 'Apparel & Shoes' },
+      { text: 'Laptop', category: 'Electronics' },
+      { text: 'Passport', category: 'Documents' },
+      { text: 'Phone charger', category: 'Electronics' },
+      { text: 'Travel documents', category: 'Documents' }
+    ]
+  },
+  {
     id: 'builtin-marathon-running',
     name: 'Marathon / Running Trip',
-    categories: ['Clothes', 'Documents', 'Electronics', 'Sports Equipment'],
+    categories: ['Documents', 'Apparel & Shoes', 'Electronics', 'Sports Equipment'],
     tripDetails: { destination: '', departureDate: '', returnDate: '', tripType: 'Marathon', notes: '' },
     items: [
-      { text: 'Running shoes', category: 'Sports Equipment' },
-      { text: 'Running clothes', category: 'Clothes' },
       { text: 'Race bib', category: 'Documents' },
       { text: 'GPS watch', category: 'Electronics' },
+      { text: 'Running clothes', category: 'Apparel & Shoes' },
+      { text: 'Running shoes', category: 'Apparel & Shoes' },
       { text: 'Water bottle', category: 'Sports Equipment' }
     ]
   },
   {
     id: 'builtin-summer-holidays',
     name: 'Summer Holidays',
-    categories: ['Clothes', 'Documents', 'Electronics'],
+    categories: ['Documents', 'Apparel & Shoes', 'Electronics'],
     tripDetails: { destination: '', departureDate: '', returnDate: '', tripType: 'Holiday', notes: '' },
     items: [
-      { text: 'T-shirts', category: 'Clothes' },
-      { text: 'Swimwear', category: 'Clothes' },
       { text: 'Passport', category: 'Documents' },
-      { text: 'Phone charger', category: 'Electronics' }
-    ]
-  },
-  {
-    id: 'builtin-business-trip',
-    name: 'Business Trip',
-    categories: ['Clothes', 'Documents', 'Electronics'],
-    tripDetails: { destination: '', departureDate: '', returnDate: '', tripType: 'Business', notes: '' },
-    items: [
-      { text: 'Business clothes', category: 'Clothes' },
-      { text: 'Laptop', category: 'Electronics' },
-      { text: 'Travel documents', category: 'Documents' },
-      { text: 'Phone charger', category: 'Electronics' }
-    ]
-  },
-  {
-    id: 'builtin-weekend-trip',
-    name: 'Weekend Trip',
-    categories: ['Clothes', 'Documents', 'Electronics'],
-    tripDetails: { destination: '', departureDate: '', returnDate: '', tripType: 'Holiday', notes: '' },
-    items: [
-      { text: 'Change of clothes', category: 'Clothes' },
-      { text: 'Wallet and ID', category: 'Documents' },
+      { text: 'Swimwear', category: 'Apparel & Shoes' },
+      { text: 'T-shirts', category: 'Apparel & Shoes' },
       { text: 'Phone charger', category: 'Electronics' }
     ]
   }
@@ -64,10 +65,14 @@ var BUILT_IN_TEMPLATES = [
 var form = document.getElementById('packing-form');
 var input = document.getElementById('item-input');
 var categorySelect = document.getElementById('category-select');
+var todoForm = document.getElementById('todo-form');
+var todoInput = document.getElementById('todo-input');
+var todoList = document.getElementById('todo-list');
+var todoProgress = document.getElementById('todo-progress');
+var todoProgressDetails = document.getElementById('todo-progress-details');
 var list = document.getElementById('packing-list');
 var countBadge = document.getElementById('item-count');
 var listSelect = document.getElementById('list-select');
-var currentListName = document.getElementById('current-list-name');
 var newListBtn = document.getElementById('new-list-btn');
 var duplicateListBtn = document.getElementById('duplicate-list-btn');
 var templatesBtn = document.getElementById('templates-btn');
@@ -108,6 +113,7 @@ var moveCategoryCancelBtn = document.getElementById('move-category-cancel');
 
 var appState = loadState();
 var editingItemId = null;
+var editingTodoId = null;
 var pendingCategoryToDelete = null;
 var modalScrollPosition = 0;
 var selectedCategoryByListId = {};
@@ -175,13 +181,13 @@ function emptyTripDetails() {
 
 function normalizeTripDetails(details) {
   details = details && typeof details === 'object' && !Array.isArray(details) ? details : {};
-  return {
-    destination: typeof details.destination === 'string' ? details.destination : '',
-    departureDate: typeof details.departureDate === 'string' ? details.departureDate : '',
-    returnDate: typeof details.returnDate === 'string' ? details.returnDate : '',
-    tripType: TRIP_TYPES.indexOf(details.tripType) >= 0 ? details.tripType : '',
-    notes: typeof details.notes === 'string' ? details.notes : ''
-  };
+  var normalized = copyRecord(details);
+  normalized.destination = typeof details.destination === 'string' ? details.destination : '';
+  normalized.departureDate = typeof details.departureDate === 'string' ? details.departureDate : '';
+  normalized.returnDate = typeof details.returnDate === 'string' ? details.returnDate : '';
+  normalized.tripType = TRIP_TYPES.indexOf(details.tripType) >= 0 ? details.tripType : '';
+  normalized.notes = typeof details.notes === 'string' ? details.notes : '';
+  return normalized;
 }
 
 function isValidTripDate(value) {
@@ -328,6 +334,7 @@ function normalizeListRecord(sourceList, fallbackCategories, usedCategoryIds) {
   list.name = typeof sourceList.name === 'string' && sourceList.name.trim() ? sourceList.name.trim() : 'My Packing List';
   list.categories = normalized.categories;
   list.items = normalized.items;
+  list.tasks = normalizeTodoTasks(sourceList.tasks);
   list.tripDetails = normalizeTripDetails(sourceList.tripDetails);
   return list;
 }
@@ -349,6 +356,7 @@ function normalizeTemplate(template, fallbackCategories, usedCategoryIds) {
     delete templateItem.packed;
     return templateItem;
   });
+  result.tasks = normalizeTodoTasks(template.tasks);
   result.tripDetails = normalizeTripDetails(template.tripDetails);
   return result;
 }
@@ -405,6 +413,34 @@ function normalizeItem(item, categories) {
   return result;
 }
 
+function normalizeTodoTasks(tasks) {
+  if (tasks === undefined || tasks === null) {
+    return [];
+  }
+  if (!Array.isArray(tasks)) {
+    throw new Error('Saved To Do tasks have an unsupported structure. Original data was preserved.');
+  }
+
+  var usedTaskIds = {};
+  return tasks.map(function(sourceTask) {
+    if (!sourceTask || typeof sourceTask !== 'object' || Array.isArray(sourceTask) ||
+        typeof sourceTask.name !== 'string' || !sourceTask.name.trim()) {
+      throw new Error('A saved To Do task has an unsupported structure. Original data was preserved.');
+    }
+    var task = copyRecord(sourceTask);
+    task.id = typeof sourceTask.id === 'string' && sourceTask.id && !usedTaskIds[sourceTask.id]
+      ? sourceTask.id
+      : createId('todo');
+    while (usedTaskIds[task.id]) {
+      task.id = createId('todo');
+    }
+    usedTaskIds[task.id] = true;
+    task.name = sourceTask.name;
+    task.completed = Boolean(sourceTask.completed);
+    return task;
+  });
+}
+
 function createList(name) {
   var categories = DEFAULT_CATEGORIES.map(function(categoryName) {
     return createCategory(categoryName);
@@ -414,7 +450,8 @@ function createList(name) {
     name: (name || '').trim() || 'My Packing List',
     tripDetails: emptyTripDetails(),
     categories: categories,
-    items: []
+    items: [],
+    tasks: []
   };
 }
 
@@ -557,7 +594,7 @@ function exportData() {
 
   var exportFile = {
     application: 'Packing List',
-    formatVersion: 2,
+    formatVersion: 4,
     exportedAt: new Date().toISOString(),
     data: exportStateWithTemplates(stateToExport)
   };
@@ -585,7 +622,8 @@ function exportStateWithTemplates(state) {
 
 function validateImportData(importFile) {
   if (!importFile || importFile.application !== 'Packing List' ||
-      (importFile.formatVersion !== 1 && importFile.formatVersion !== 2)) {
+    (importFile.formatVersion !== 1 && importFile.formatVersion !== 2 &&
+      importFile.formatVersion !== 3 && importFile.formatVersion !== 4)) {
     return null;
   }
 
@@ -641,6 +679,14 @@ function validateImportData(importFile) {
     if (!isValidTripDetails(listItem.tripDetails)) {
       return false;
     }
+    if (listItem.tasks !== undefined && (!Array.isArray(listItem.tasks) || !listItem.tasks.every(function(task) {
+      return task && typeof task === 'object' && !Array.isArray(task) &&
+        typeof task.name === 'string' && !!task.name.trim() &&
+        (task.id === undefined || (typeof task.id === 'string' && !!task.id)) &&
+        (task.completed === undefined || typeof task.completed === 'boolean');
+    }))) {
+      return false;
+    }
 
     listIds[listItem.id] = true;
     var itemIds = {};
@@ -683,6 +729,15 @@ function validateImportData(importFile) {
         return category && typeof category.id === 'string' && !!category.id &&
           typeof category.name === 'string' && !!category.name.trim();
       })) {
+        return false;
+      }
+
+      if (template.tasks !== undefined && (!Array.isArray(template.tasks) || !template.tasks.every(function(task) {
+        return task && typeof task === 'object' && !Array.isArray(task) &&
+          typeof task.name === 'string' && !!task.name.trim() &&
+          (task.id === undefined || (typeof task.id === 'string' && !!task.id)) &&
+          (task.completed === undefined || typeof task.completed === 'boolean');
+      }))) {
         return false;
       }
 
@@ -805,6 +860,137 @@ function updateCount() {
   progressDetails.textContent = packedCount + ' of ' + total + ' packed · ' + percentage + '%';
 }
 
+function updateTodoProgress(activeList) {
+  var completedCount = activeList.tasks.filter(function(task) {
+    return task.completed;
+  }).length;
+  var total = activeList.tasks.length;
+  var percentage = total === 0 ? 0 : Math.round((completedCount / total) * 100);
+  todoProgress.value = percentage;
+  todoProgressDetails.textContent = completedCount + ' of ' + total + ' complete · ' + percentage + '%';
+}
+
+function createTodoRow(activeList, task) {
+  var row = document.createElement('li');
+  row.className = 'todo-row' + (task.completed ? ' completed' : '');
+
+  var checkbox = document.createElement('input');
+  checkbox.type = 'checkbox';
+  checkbox.checked = task.completed;
+  checkbox.className = 'todo-checkbox';
+  checkbox.setAttribute('aria-label', (task.completed ? 'Mark incomplete: ' : 'Mark complete: ') + task.name);
+  checkbox.addEventListener('change', function() {
+    task.completed = checkbox.checked;
+    saveState();
+    renderTodoList();
+  });
+  row.appendChild(checkbox);
+
+  if (editingTodoId === task.id) {
+    var editInput = document.createElement('input');
+    editInput.type = 'text';
+    editInput.maxLength = 120;
+    editInput.className = 'todo-edit-input';
+    editInput.value = task.name;
+    editInput.setAttribute('aria-label', 'Edit task name');
+    row.appendChild(editInput);
+
+    var saveButton = document.createElement('button');
+    saveButton.type = 'button';
+    saveButton.className = 'todo-action-btn todo-save-btn';
+    saveButton.textContent = 'Save';
+    saveButton.addEventListener('click', function() {
+      var updatedName = editInput.value.trim();
+      if (!updatedName) {
+        editInput.focus();
+        return;
+      }
+      task.name = updatedName;
+      editingTodoId = null;
+      saveState();
+      renderTodoList();
+    });
+    row.appendChild(saveButton);
+
+    var cancelButton = document.createElement('button');
+    cancelButton.type = 'button';
+    cancelButton.className = 'todo-action-btn';
+    cancelButton.textContent = 'Cancel';
+    cancelButton.addEventListener('click', function() {
+      editingTodoId = null;
+      renderTodoList();
+    });
+    row.appendChild(cancelButton);
+    return row;
+  }
+
+  var name = document.createElement('span');
+  name.className = 'todo-name';
+  name.textContent = task.name;
+  name.title = task.name;
+  row.appendChild(name);
+
+  var actions = document.createElement('div');
+  actions.className = 'todo-actions';
+
+  var editButton = document.createElement('button');
+  editButton.type = 'button';
+  editButton.className = 'todo-icon-btn';
+  editButton.setAttribute('aria-label', 'Edit task: ' + task.name);
+  editButton.title = 'Edit task';
+  editButton.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z"/></svg>';
+  editButton.addEventListener('click', function() {
+    editingTodoId = task.id;
+    renderTodoList();
+  });
+  actions.appendChild(editButton);
+
+  var deleteButton = document.createElement('button');
+  deleteButton.type = 'button';
+  deleteButton.className = 'todo-icon-btn todo-delete-btn';
+  deleteButton.setAttribute('aria-label', 'Delete task: ' + task.name);
+  deleteButton.title = 'Delete task';
+  deleteButton.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="m19 6-1 14H6L5 6"/><path d="M10 11v5M14 11v5"/></svg>';
+  deleteButton.addEventListener('click', function() {
+    activeList.tasks = activeList.tasks.filter(function(currentTask) {
+      return currentTask.id !== task.id;
+    });
+    saveState();
+    renderTodoList();
+  });
+  actions.appendChild(deleteButton);
+  row.appendChild(actions);
+  return row;
+}
+
+function renderTodoList() {
+  var activeList = getActiveList();
+  if (!activeList) {
+    return;
+  }
+
+  if (editingTodoId && !activeList.tasks.some(function(task) {
+    return task.id === editingTodoId;
+  })) {
+    editingTodoId = null;
+  }
+
+  todoList.innerHTML = '';
+  if (activeList.tasks.length === 0) {
+    var emptyMessage = document.createElement('li');
+    emptyMessage.className = 'todo-empty';
+    emptyMessage.textContent = 'No tasks yet';
+    todoList.appendChild(emptyMessage);
+  } else {
+    activeList.tasks.slice(0).sort(function(first, second) {
+      return first.name.localeCompare(second.name, 'pl', { sensitivity: 'base' });
+    }).forEach(function(task) {
+      todoList.appendChild(createTodoRow(activeList, task));
+    });
+  }
+  updateTodoProgress(activeList);
+}
+
 function renderListSelector() {
   var activeList = getActiveList();
   listSelect.innerHTML = '';
@@ -817,28 +1003,40 @@ function renderListSelector() {
   });
 
   listSelect.value = activeList.id;
-  currentListName.textContent = activeList.name;
 }
 
 function renderTripDetails() {
   var details = normalizeTripDetails(getActiveList().tripDetails);
-  var fields = [
-    ['Destination', details.destination],
-    ['Departure Date', details.departureDate],
-    ['Return Date', details.returnDate],
-    ['Trip Type', details.tripType],
-    ['Notes', details.notes]
-  ];
-
   tripDetailsDisplay.innerHTML = '';
-  fields.forEach(function(field) {
-    var term = document.createElement('dt');
-    term.textContent = field[0];
-    var description = document.createElement('dd');
-    description.textContent = field[1] || 'Not set';
-    tripDetailsDisplay.appendChild(term);
-    tripDetailsDisplay.appendChild(description);
-  });
+
+  function appendField(column, label, value) {
+    var field = document.createElement('div');
+    field.className = 'detail-field';
+    var term = document.createElement('span');
+    term.className = 'detail-label';
+    term.textContent = label;
+    var description = document.createElement('span');
+    description.className = 'detail-value';
+    description.textContent = value || 'Not set';
+    field.appendChild(term);
+    field.appendChild(description);
+    column.appendChild(field);
+  }
+
+  var leftColumn = document.createElement('div');
+  leftColumn.className = 'details-column';
+  appendField(leftColumn, 'Destination', details.destination);
+  appendField(leftColumn, 'Departure Date', details.departureDate);
+  appendField(leftColumn, 'Return Date', details.returnDate);
+
+  var rightColumn = document.createElement('div');
+  rightColumn.className = 'details-column';
+  appendField(rightColumn, 'Trip Type', details.tripType);
+  appendField(rightColumn, 'Notes', details.notes);
+  rightColumn.appendChild(document.createElement('div')).className = 'detail-field detail-field-empty';
+
+  tripDetailsDisplay.appendChild(leftColumn);
+  tripDetailsDisplay.appendChild(rightColumn);
 }
 
 function updateTripDateValidation() {
@@ -1031,6 +1229,12 @@ function saveCurrentListAsTemplate() {
       templateItem.categoryId = categoryIds[item.categoryId];
       return templateItem;
     }),
+    tasks: activeList.tasks.map(function(task) {
+      var templateTask = copyRecord(task);
+      delete templateTask.id;
+      delete templateTask.completed;
+      return templateTask;
+    }),
     tripDetails: normalizeTripDetails(activeList.tripDetails)
   };
   appState.templates = normalizeTemplates(appState.templates).concat(template);
@@ -1105,6 +1309,12 @@ function createListFromTemplate(template) {
     name: listName,
     tripDetails: normalizeTripDetails(template.tripDetails),
     categories: categories,
+    tasks: template.id.indexOf('builtin-') === 0 ? [] : template.tasks.map(function(task) {
+      var copy = copyRecord(task);
+      copy.id = createId('todo');
+      copy.completed = false;
+      return copy;
+    }),
     items: template.items.map(function(item) {
       var copy = copyRecord(item);
       copy.id = createId('item');
@@ -1364,6 +1574,7 @@ function createItemRow(currentList, item) {
   var text = document.createElement('span');
   text.className = 'item-name';
   text.textContent = item.text;
+  text.title = item.text;
 
   var actionGroup = document.createElement('div');
   actionGroup.className = 'item-actions';
@@ -1371,8 +1582,9 @@ function createItemRow(currentList, item) {
   var editButton = document.createElement('button');
   editButton.type = 'button';
   editButton.className = 'edit-btn';
-  editButton.textContent = 'Edit';
+  editButton.textContent = '✎';
   editButton.setAttribute('aria-label', 'Edit ' + item.text);
+  editButton.title = 'Edit item';
   editButton.addEventListener('click', function() {
     editingItemId = item.id;
     renderApp();
@@ -1381,8 +1593,9 @@ function createItemRow(currentList, item) {
   var deleteButton = document.createElement('button');
   deleteButton.type = 'button';
   deleteButton.className = 'delete-btn';
-  deleteButton.textContent = 'Delete';
+  deleteButton.textContent = '×';
   deleteButton.setAttribute('aria-label', 'Delete ' + item.text);
+  deleteButton.title = 'Delete item';
   deleteButton.addEventListener('click', function() {
     currentList.items = currentList.items.filter(function(currentItem) {
       return currentItem.id !== item.id;
@@ -1405,35 +1618,14 @@ function renderList() {
   var activeList = getActiveList();
   list.innerHTML = '';
 
-  function renderEmptyCategory(category) {
-    var emptyGroup = document.createElement('li');
-    emptyGroup.className = 'category-group';
-
-    var heading = document.createElement('h2');
-    heading.className = 'category-heading';
-    heading.textContent = category;
-
-    var emptyItem = document.createElement('div');
-    emptyItem.className = 'empty-state';
-    emptyItem.textContent = 'No items in this category';
-
-    emptyGroup.appendChild(heading);
-    emptyGroup.appendChild(emptyItem);
-    list.appendChild(emptyGroup);
-  }
-
-  if (activeList.items.length === 0) {
-    getCategories(activeList).forEach(function(category) {
-      renderEmptyCategory(category.name);
-    });
-    updateCount();
-    return;
-  }
-
   getCategories(activeList).forEach(function(category) {
     var categoryItems = activeList.items.filter(function(item) {
       return item.categoryId === category.id;
     });
+    if (categoryItems.length === 0) {
+      return;
+    }
+
     var group = document.createElement('li');
     group.className = 'category-group';
 
@@ -1444,18 +1636,11 @@ function renderList() {
     var groupedList = document.createElement('ul');
     groupedList.className = 'category-items';
 
-    if (categoryItems.length === 0) {
-      var emptyItem = document.createElement('li');
-      emptyItem.className = 'empty-state';
-      emptyItem.textContent = 'No items in this category';
-      groupedList.appendChild(emptyItem);
-    } else {
-      categoryItems.slice(0).sort(function(first, second) {
-        return first.text.localeCompare(second.text, 'pl', { sensitivity: 'base' });
-      }).forEach(function(item) {
-        groupedList.appendChild(createItemRow(activeList, item));
-      });
-    }
+    categoryItems.slice(0).sort(function(first, second) {
+      return first.text.localeCompare(second.text, 'pl', { sensitivity: 'base' });
+    }).forEach(function(item) {
+      groupedList.appendChild(createItemRow(activeList, item));
+    });
 
     group.appendChild(heading);
     group.appendChild(groupedList);
@@ -1481,6 +1666,7 @@ function renderApp() {
   renderListSelector();
   renderTripDetails();
   renderList();
+  renderTodoList();
 }
 
 function createNewList() {
@@ -1524,6 +1710,12 @@ function duplicateCurrentList() {
     name: trimmedName,
     tripDetails: normalizeTripDetails(activeList.tripDetails),
     categories: categories,
+    tasks: activeList.tasks.map(function(task) {
+      var copy = copyRecord(task);
+      copy.id = createId('todo');
+      copy.completed = false;
+      return copy;
+    }),
     items: activeList.items.map(function(item) {
       var copy = copyRecord(item);
       copy.id = createId('item');
@@ -1612,6 +1804,7 @@ listSelect.addEventListener('change', function(event) {
     selectedCategoryByListId[previousList.id] = categorySelect.value;
   }
   appState.activeListId = event.target.value;
+  editingTodoId = null;
   saveState();
   renderApp();
 });
@@ -1621,6 +1814,26 @@ categorySelect.addEventListener('change', function() {
   if (activeList && getCategoryById(categorySelect.value, activeList.categories)) {
     selectedCategoryByListId[activeList.id] = categorySelect.value;
   }
+});
+
+todoForm.addEventListener('submit', function(event) {
+  event.preventDefault();
+  var activeList = getActiveList();
+  var name = todoInput.value.trim();
+  if (!name) {
+    todoInput.focus();
+    return;
+  }
+
+  activeList.tasks.push({
+    id: createId('todo'),
+    name: name,
+    completed: false
+  });
+  todoInput.value = '';
+  saveState();
+  renderTodoList();
+  todoInput.focus();
 });
 
 tripDepartureDateInput.addEventListener('input', updateTripDateValidation);
